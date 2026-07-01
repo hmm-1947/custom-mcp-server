@@ -1,6 +1,38 @@
+import json
 from pathlib import Path
 
+CONFIG_FILE = Path(__file__).parent / "config.json"
+
 WORKSPACE = None
+RUN_COMMAND = None
+
+
+def load():
+    global WORKSPACE, RUN_COMMAND
+
+    if not CONFIG_FILE.exists():
+        return
+
+    data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+
+    workspace = data.get("workspace")
+    if workspace:
+        WORKSPACE = Path(workspace)
+
+    RUN_COMMAND = data.get("run_command")
+
+
+def save():
+    CONFIG_FILE.write_text(
+        json.dumps(
+            {
+                "workspace": str(WORKSPACE) if WORKSPACE else None,
+                "run_command": RUN_COMMAND,
+            },
+            indent=4,
+        ),
+        encoding="utf-8",
+    )
 
 
 def set_workspace(path: str):
@@ -16,12 +48,22 @@ def set_workspace(path: str):
 
     WORKSPACE = p
 
-RUN_COMMAND = None
+    save()
+
+
+def get_workspace() -> Path:
+    if WORKSPACE is None:
+        raise RuntimeError("Workspace not set")
+
+    return WORKSPACE
 
 
 def set_run_command(command: str):
     global RUN_COMMAND
+
     RUN_COMMAND = command
+
+    save()
 
 
 def get_run_command():
@@ -30,12 +72,6 @@ def get_run_command():
 
     return RUN_COMMAND
 
-
-def get_workspace() -> Path:
-    if WORKSPACE is None:
-        raise RuntimeError("Workspace not set")
-
-    return WORKSPACE
 
 def resolve_path(path: str) -> Path:
     workspace = get_workspace().resolve()
@@ -46,3 +82,6 @@ def resolve_path(path: str) -> Path:
         raise PermissionError("Access outside the workspace is not allowed")
 
     return target
+
+
+load()

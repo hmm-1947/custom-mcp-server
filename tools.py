@@ -15,6 +15,28 @@ def register_tools(mcp: FastMCP):
 
         return f"Workspace set to {path}"
     
+    @mcp.tool()
+    def run_project() -> dict:
+        """Run the current project and wait until it finishes."""
+
+        from config import get_run_command
+
+        pid = manager.run(
+            get_run_command(),
+            cwd=get_workspace()
+        )
+
+        return manager.wait(pid)
+    
+    @mcp.tool()
+    def set_run_command(command: str) -> str:
+        """Set the project's run command."""
+
+        from config import set_run_command
+
+        set_run_command(command)
+
+        return f"Run command set to: {command}"
 
     @mcp.tool()
     def set_run_command(command: str) -> str:
@@ -27,12 +49,10 @@ def register_tools(mcp: FastMCP):
         return f"Run command set to: {command}"
     
     @mcp.tool()
-    def read_output(process_id: int) -> dict:
-        """Read the output of a finished process."""
+    def wait_for_process(process_id: int) -> dict:
+        """Wait until a process finishes and return its output."""
 
-        process = manager.get(process_id)
-
-        return process.output()
+        return manager.wait(process_id)
     
     @mcp.tool()
     def run_command(command: str) -> int:
@@ -101,6 +121,25 @@ def register_tools(mcp: FastMCP):
             raise NotADirectoryError(f"{path} is not a directory")
 
         return sorted(item.name for item in p.iterdir())
+    
+    @mcp.tool()
+    def terminal(process_id: int) -> dict:
+        """Read the current terminal output."""
+
+        return manager.get(process_id).output()
+    
+    @mcp.tool()
+    def tail_terminal(process_id: int, lines: int = 20) -> dict:
+        """Return the last lines of terminal output."""
+
+        process = manager.get(process_id)
+
+        return {
+            "running": process.process.poll() is None,
+            "exit_code": process.process.poll(),
+            "stdout": process.tail_stdout(lines),
+            "stderr": process.tail_stderr(lines),
+        }
     
     @mcp.tool()
     def read_file(path: str) -> str:
