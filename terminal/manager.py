@@ -22,9 +22,25 @@ class TerminalManager:
             raise ValueError("Invalid process id")
 
         return self.processes[pid]
+    def tail(
+        self,
+        pid: int,
+        stdout_cursor: int = 0,
+        stderr_cursor: int = 0,
+    ):
+        return self.get(pid).tail(
+            stdout_cursor,
+            stderr_cursor,
+        )
     
     def wait(self, pid: int):
         return self.get(pid).wait()
+    
+    def is_running(self, pid: int):
+        return self.get(pid).is_running()
+    
+    def stop(self, pid: int):
+        return self.get(pid).stop()
 
 
 manager = TerminalManager()

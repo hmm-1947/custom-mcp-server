@@ -1,4 +1,4 @@
 {
-    "workspace": "D:\\pythontest",
-    "run_command": "python main.py"
+    "workspace": "D:\\mctest\\mc",
+    "run_command": "mvn exec:java \"-Dexec.mainClass=com.joshuastar.Main\""
 }

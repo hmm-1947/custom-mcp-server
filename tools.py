@@ -127,19 +127,45 @@ def register_tools(mcp: FastMCP):
         """Read the current terminal output."""
 
         return manager.get(process_id).output()
-    
     @mcp.tool()
-    def tail_terminal(process_id: int, lines: int = 20) -> dict:
-        """Return the last lines of terminal output."""
+    def is_running(process_id: int) -> bool:
+        """Check whether a process is still running."""
 
-        process = manager.get(process_id)
+        return manager.is_running(process_id)
+    @mcp.tool()
+    def stop_process(process_id: int) -> dict:
+        """Stop a running process."""
+
+        return manager.stop(process_id)
+    @mcp.tool()
+    def start_project() -> dict:
+        """Start the project without waiting for it to exit."""
+
+        from config import get_run_command
+
+        pid = manager.run(
+            get_run_command(),
+            cwd=get_workspace()
+        )
 
         return {
-            "running": process.process.poll() is None,
-            "exit_code": process.process.poll(),
-            "stdout": process.tail_stdout(lines),
-            "stderr": process.tail_stderr(lines),
+            "process_id": pid,
+            "status": "started"
         }
+    
+    @mcp.tool()
+    def tail_terminal(
+        process_id: int,
+        stdout_cursor: int = 0,
+        stderr_cursor: int = 0,
+    ) -> dict:
+        """Return only the new terminal output."""
+
+        return manager.tail(
+            process_id,
+            stdout_cursor,
+            stderr_cursor,
+        )
     
     @mcp.tool()
     def read_file(path: str) -> str:

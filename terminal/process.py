@@ -8,8 +8,8 @@ class TerminalProcess:
 
         self.command = command
 
-        self.stdout_history = deque(maxlen=5000)
-        self.stderr_history = deque(maxlen=5000)
+        self.stdout_history = []
+        self.stderr_history = []
 
         self.process = subprocess.Popen(
             command,
@@ -52,6 +52,35 @@ class TerminalProcess:
 
     def tail_stderr(self, lines: int = 20):
         return "\n".join(list(self.stderr_history)[-lines:])
+    def tail(
+        self,
+        stdout_cursor: int = 0,
+        stderr_cursor: int = 0,
+    ):
+        return {
+            "running": self.is_running(),
+            "exit_code": self.process.poll(),
+
+            "stdout_cursor": len(self.stdout_history),
+            "stderr_cursor": len(self.stderr_history),
+
+            "stdout": self.stdout_history[stdout_cursor:],
+            "stderr": self.stderr_history[stderr_cursor:],
+        }
     def wait(self):
         self.process.wait()
         return self.output()
+    def is_running(self):
+        return self.process.poll() is None
+    def stop(self):
+        if self.is_running():
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except Exception:
+                self.process.kill()
+
+        return {
+            "success": True,
+            "exit_code": self.process.returncode,
+        }
