@@ -1,46 +1,63 @@
 from .process import TerminalProcess
 
 
+from .process import TerminalProcess
+
+
 class TerminalManager:
 
     def __init__(self):
         self.processes = {}
-        self.next_id = 1
 
-    def run(self, command: str, cwd=None) -> int:
-        process = TerminalProcess(command, cwd)
+    def run(self, command: str, cwd=None, name: str | None = None) -> str:
+        if name is None:
+            raise ValueError("Terminal name is required")
 
-        pid = self.next_id
-        self.next_id += 1
+        if name in self.processes:
+            old = self.processes[name]
 
-        self.processes[pid] = process
+            if old.is_running():
+                raise ValueError(f"Terminal '{name}' is already running")
 
-        return pid
+        self.processes[name] = TerminalProcess(command, cwd)
 
-    def get(self, pid: int):
-        if pid not in self.processes:
-            raise ValueError("Invalid process id")
+        return name
 
-        return self.processes[pid]
+    def get(self, name: str):
+        if name not in self.processes:
+            raise ValueError(f"Terminal '{name}' does not exist")
+
+        return self.processes[name]
+
     def tail(
         self,
-        pid: int,
+        name: str,
         stdout_cursor: int = 0,
         stderr_cursor: int = 0,
     ):
-        return self.get(pid).tail(
+        return self.get(name).tail(
             stdout_cursor,
             stderr_cursor,
         )
-    
-    def wait(self, pid: int):
-        return self.get(pid).wait()
-    
-    def is_running(self, pid: int):
-        return self.get(pid).is_running()
-    
-    def stop(self, pid: int):
-        return self.get(pid).stop()
+
+    def wait(self, name: str, tail: int | None = 200):
+        return self.get(name).wait(tail)
+
+    def is_running(self, name: str):
+        return self.get(name).is_running()
+
+    def stop(self, name: str):
+        return self.get(name).stop()
+
+    def list(self):
+        return [
+            {
+                "name": name,
+                "running": process.is_running(),
+            }
+            for name, process in self.processes.items()
+        ]
+
 
 
 manager = TerminalManager()

@@ -1,4 +1,6 @@
 {
-    "workspace": "D:\\mctest\\mc",
-    "run_command": "mvn exec:java \"-Dexec.mainClass=com.joshuastar.Main\""
+    "workspaces": {
+        "joshua-mcp": "D:\\mcpserver\\joshua-mcp"
+    },
+    "run_commands": {}
 }

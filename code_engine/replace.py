@@ -8,12 +8,10 @@ def replace_function(
     function_name: str,
     new_function: str,
 ):
-    node = find_function(path, function_name)
+    node, source = find_function(path, function_name)
 
     if node is None:
         raise ValueError(f"Function '{function_name}' not found")
-
-    source = Path(path).read_bytes()
 
     new_source = (
         source[:node.start_byte]

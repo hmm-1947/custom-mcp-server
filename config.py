@@ -3,31 +3,35 @@ from pathlib import Path
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
-WORKSPACE = None
-RUN_COMMAND = None
+WORKSPACES = {}
+RUN_COMMANDS = {}
 
 
 def load():
-    global WORKSPACE, RUN_COMMAND
+    global WORKSPACES, RUN_COMMANDS
 
     if not CONFIG_FILE.exists():
         return
 
     data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
 
-    workspace = data.get("workspace")
-    if workspace:
-        WORKSPACE = Path(workspace)
+    WORKSPACES = {
+        name: Path(path)
+        for name, path in data.get("workspaces", {}).items()
+    }
 
-    RUN_COMMAND = data.get("run_command")
+    RUN_COMMANDS = data.get("run_commands", {})
 
 
 def save():
     CONFIG_FILE.write_text(
         json.dumps(
             {
-                "workspace": str(WORKSPACE) if WORKSPACE else None,
-                "run_command": RUN_COMMAND,
+                "workspaces": {
+                    name: str(path)
+                    for name, path in WORKSPACES.items()
+                },
+                "run_commands": RUN_COMMANDS,
             },
             indent=4,
         ),
@@ -35,9 +39,7 @@ def save():
     )
 
 
-def set_workspace(path: str):
-    global WORKSPACE
-
+def add_workspace(name: str, path: str):
     p = Path(path).resolve()
 
     if not p.exists():
@@ -46,39 +48,65 @@ def set_workspace(path: str):
     if not p.is_dir():
         raise NotADirectoryError(path)
 
-    WORKSPACE = p
+    WORKSPACES[name] = p
+
+    save()
+
+def list_workspaces() -> dict[str, str]:
+    return {
+        name: str(path)
+        for name, path in WORKSPACES.items()
+    }
+
+def remove_workspace(name: str):
+    if name not in WORKSPACES:
+        raise RuntimeError(f"Workspace '{name}' not found")
+
+    WORKSPACES.pop(name, None)
+    RUN_COMMANDS.pop(name, None)
+
+    save()
+
+def get_workspace(name: str) -> Path:
+    if name not in WORKSPACES:
+        raise RuntimeError(f"Workspace '{name}' not found")
+
+    return WORKSPACES[name]
+
+def iter_workspace_files(name: str):
+    root = get_workspace(name)
+
+    for p in root.rglob("*"):
+        if p.is_file():
+            yield p
+
+def set_run_command(workspace: str, command: str):
+    if workspace not in WORKSPACES:
+        raise RuntimeError(f"Workspace '{workspace}' not found")
+
+    RUN_COMMANDS[workspace] = command
 
     save()
 
 
-def get_workspace() -> Path:
-    if WORKSPACE is None:
-        raise RuntimeError("Workspace not set")
+def get_run_command(workspace: str):
+    if workspace not in RUN_COMMANDS:
+        raise RuntimeError(
+            f"Run command not set for workspace '{workspace}'"
+        )
 
-    return WORKSPACE
-
-
-def set_run_command(command: str):
-    global RUN_COMMAND
-
-    RUN_COMMAND = command
-
-    save()
+    return RUN_COMMANDS[workspace]
 
 
-def get_run_command():
-    if RUN_COMMAND is None:
-        raise RuntimeError("Run command not set")
+def resolve_path(
+    workspace: str,
+    path: str,
+) -> Path:
+    root = get_workspace(workspace).resolve()
 
-    return RUN_COMMAND
+    target = (root / path).resolve()
 
-
-def resolve_path(path: str) -> Path:
-    workspace = get_workspace().resolve()
-
-    target = (workspace / path).resolve()
-
-    if target != workspace and workspace not in target.parents:
+    if target != root and root not in target.parents:
         raise PermissionError("Access outside the workspace is not allowed")
 
     return target

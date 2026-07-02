@@ -1,6 +1,5 @@
 import subprocess
 import threading
-from collections import deque
 
 class TerminalProcess:
 
@@ -17,7 +16,7 @@ class TerminalProcess:
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
             text=True,
             bufsize=1,
         )
@@ -40,13 +39,20 @@ class TerminalProcess:
         for line in self.process.stderr:
             self.stderr_history.append(line.rstrip())
 
-    def output(self):
+    def output(self, tail: int | None = 200):
+        stdout = self.stdout_history[-tail:] if tail else self.stdout_history
+        stderr = self.stderr_history[-tail:] if tail else self.stderr_history
+
         return {
             "running": self.process.poll() is None,
             "exit_code": self.process.poll(),
-            "stdout": "\n".join(self.stdout_history),
-            "stderr": "\n".join(self.stderr_history),
+            "stdout": "\n".join(stdout),
+            "stderr": "\n".join(stderr),
+            "stdout_total_lines": len(self.stdout_history),
+            "stderr_total_lines": len(self.stderr_history),
         }
+    
+
     def tail_stdout(self, lines: int = 20):
         return "\n".join(list(self.stdout_history)[-lines:])
 
@@ -67,9 +73,13 @@ class TerminalProcess:
             "stdout": self.stdout_history[stdout_cursor:],
             "stderr": self.stderr_history[stderr_cursor:],
         }
-    def wait(self):
+    
+
+    def wait(self, tail: int | None = 200):
         self.process.wait()
-        return self.output()
+        return self.output(tail)
+    
+    
     def is_running(self):
         return self.process.poll() is None
     def stop(self):
