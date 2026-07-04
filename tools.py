@@ -1,5 +1,6 @@
 from fastmcp import FastMCP
 import os
+import subprocess
 from terminal.manager import manager
 from code_engine.replace import replace_function as ts_replace_function
 from code_engine.finder import (
@@ -20,6 +21,74 @@ from config import (
     set_run_command as config_set_run_command,
     iter_workspace_files,
 )
+from typing import TypedDict, Optional
+
+
+class TerminalOutput(TypedDict):
+    running: bool
+    exit_code: Optional[int]
+    stdout: str
+    stderr: str
+    stdout_total_lines: int
+    stderr_total_lines: int
+
+
+class TerminalInfo(TypedDict):
+    name: str
+    running: bool
+
+
+class StopResult(TypedDict):
+    success: bool
+    exit_code: Optional[int]
+
+
+class SymbolMatch(TypedDict):
+    name: str
+    type: str
+    line: int
+    file: str
+
+
+class SymbolInfo(TypedDict):
+    name: str
+    signature: str
+    line: int
+
+
+class SearchMatch(TypedDict):
+    file: str
+    line: int
+    text: str
+
+def _search_text_fallback(root, text, case_sensitive, max_results):
+    results = []
+
+    compare_text = text if case_sensitive else text.lower()
+
+    for dirpath, _, filenames in os.walk(root):
+        for filename in filenames:
+            path = os.path.join(dirpath, filename)
+
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line_number, line in enumerate(f, start=1):
+                        compare = line if case_sensitive else line.lower()
+
+                        if compare_text in compare:
+                            results.append({
+                                "file": path,
+                                "line": line_number,
+                                "text": line.strip()[:200]
+                            })
+
+                            if len(results) >= max_results:
+                                return results
+
+            except Exception:
+                pass
+
+    return results
 
 def register_tools(mcp: FastMCP):
     @mcp.tool()
@@ -27,7 +96,7 @@ def register_tools(mcp: FastMCP):
         workspace: str,
         query: str,
         max_results: int = 50,
-    ) -> list[dict]:
+    ) -> list[SymbolMatch]:
         """Search all files in the workspace for functions/classes whose name contains query. Returns file, name, type, and line number."""
 
         results = []
@@ -56,7 +125,7 @@ def register_tools(mcp: FastMCP):
     def list_classes_tool(
         workspace: str,
         path: str,
-    ) -> list[dict]:
+    ) -> list[SymbolInfo]:
         """List all classes in a file with name, signature, and line number."""
 
         return list_classes(
@@ -81,7 +150,7 @@ def register_tools(mcp: FastMCP):
     def list_functions_tool(
         workspace: str,
         path: str,
-    ) -> list[dict]:
+    ) -> list[SymbolInfo]:
         """List all functions in a file with name, signature, and line number."""
 
         return list_functions(
@@ -133,7 +202,7 @@ def register_tools(mcp: FastMCP):
         workspace: str,
         terminal: str,
         tail: int = 200,
-    ) -> dict:
+    ) -> TerminalOutput:
         """Run the current project and wait until it finishes. Returns only the last `tail` lines of stdout/stderr by default."""
 
         manager.run(
@@ -143,7 +212,7 @@ def register_tools(mcp: FastMCP):
         )
 
         return manager.wait(terminal, tail)
-    
+
     @mcp.tool()
     def set_run_command(
         workspace: str,
@@ -156,13 +225,13 @@ def register_tools(mcp: FastMCP):
         return f"Run command set to: {command}"
 
     @mcp.tool()
-    def wait_for_terminal(terminal: str, tail: int = 200) -> dict:
+    def wait_for_terminal(terminal: str, tail: int = 200) -> TerminalOutput:
         """Wait until a terminal finishes. Returns only the last `tail` lines of stdout/stderr by default."""
 
         return manager.wait(terminal, tail)
         
     @mcp.tool()
-    def list_terminals() -> list[dict]:
+    def list_terminals() -> list[TerminalInfo]:
         """List all terminals."""
 
         return manager.list()
@@ -172,7 +241,7 @@ def register_tools(mcp: FastMCP):
         workspace: str,
         terminal: str,
         command: str,
-    ):
+    ) -> dict[str, str]:
         """Run a terminal command in the current workspace."""
 
         manager.run(
@@ -254,14 +323,14 @@ def register_tools(mcp: FastMCP):
         return sorted(item.name for item in p.iterdir())
     
     @mcp.tool()
-    def terminal(terminal: str, tail: int = 200) -> dict:
+    def terminal(terminal: str, tail: int = 200) -> TerminalOutput:
         """Get a snapshot of terminal output (last `tail` lines by default, tail=0 for full history). Use this for a one-off check. For repeatedly polling a running process, use tail_terminal instead to avoid re-reading the same lines."""
 
         return manager.get(terminal).output(tail or None)
 
 
     @mcp.tool()
-    def stop_terminal(terminal: str) -> dict:
+    def stop_terminal(terminal: str) -> StopResult:
         """Stop a running terminal."""
 
         return manager.stop(terminal)
@@ -271,7 +340,7 @@ def register_tools(mcp: FastMCP):
     def start_project(
         workspace: str,
         terminal: str,
-    ) -> dict:
+    ) -> dict[str, str]:
         """Start the project without waiting for it to exit."""
 
         manager.run(
@@ -330,34 +399,54 @@ def register_tools(mcp: FastMCP):
     text: str,
     case_sensitive: bool = False,
     max_results: int = 100,
-    ) -> list[dict]:
-        """Search for text in all files under a directory."""
+    ) -> list[SearchMatch]:
+        """Search for text in all files under a directory using ripgrep. Respects .gitignore."""
+
+        root = get_workspace(workspace)
+
+        cmd = [
+            "rg",
+            "--line-number",
+            "--no-heading",
+            "--max-count", str(max_results),
+            text,
+            str(root),
+        ]
+
+        if not case_sensitive:
+            cmd.insert(1, "--ignore-case")
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except FileNotFoundError:
+            return _search_text_fallback(root, text, case_sensitive, max_results)
+
+        if proc.returncode not in (0, 1):
+            return _search_text_fallback(root, text, case_sensitive, max_results)
 
         results = []
 
-        if not case_sensitive:
-            text = text.lower()
+        for line in proc.stdout.splitlines():
+            parts = line.split(":", 2)
 
-        for dirpath, _, filenames in os.walk(get_workspace(workspace)):
-            for filename in filenames:
-                path = os.path.join(dirpath, filename)
+            if len(parts) != 3:
+                continue
 
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        for line_number, line in enumerate(f, start=1):
-                            compare = line if case_sensitive else line.lower()
+            file, line_number, content = parts
 
-                            if text in compare:
-                                results.append({
-                                    "file": path,
-                                    "line": line_number,
-                                    "text": line.strip()
-                                })
-                                if len(results) >= max_results:
-                                    return results
+            results.append({
+                "file": file,
+                "line": int(line_number),
+                "text": content.strip()[:200],
+            })
 
-                except Exception:
-                    pass
+            if len(results) >= max_results:
+                break
 
         return results
     

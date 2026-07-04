@@ -1,6 +1,14 @@
 {
     "workspaces": {
-        "joshua-mcp": "D:\\mcpserver\\joshua-mcp"
+        "joshua-mcp": "D:\\mcpserver\\joshua-mcp",
+        "pythontest": "D:\\pythontest",
+        "user-lib": "D:\\livekittest\\user\\lib",
+        "listener-lib": "D:\\livekittest\\listener\\lib",
+        "backend": "D:\\livekittest\\backend",
+        "listener": "D:\\livekittest\\listener\\lib",
+        "user": "D:\\livekittest\\user\\lib",
+        "lib": "D:\\LiveKitFinal\\livekitapp\\lib",
+        "D:\\LiveKitFinal": "D:\\LiveKitFinal"
     },
     "run_commands": {}
 }
