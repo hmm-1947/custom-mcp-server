@@ -1,8 +1,0 @@
-terminal
-├── __init__.py
-├── __pycache__/
-│   ├── __init__.cpython-313.pyc
-│   ├── manager.cpython-313.pyc
-│   └── process.cpython-313.pyc
-├── manager.py
-└── process.py

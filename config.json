@@ -8,7 +8,9 @@
         "listener": "D:\\livekittest\\listener\\lib",
         "user": "D:\\livekittest\\user\\lib",
         "lib": "D:\\LiveKitFinal\\livekitapp\\lib",
-        "D:\\LiveKitFinal": "D:\\LiveKitFinal"
+        "D:\\LiveKitFinal": "D:\\LiveKitFinal",
+        "backend2": "D:\\LiveKitFinal\\backend",
+        "app_root": "D:\\LiveKitFinal\\livekitapp"
     },
     "run_commands": {}
 }
