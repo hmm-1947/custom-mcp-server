@@ -1,6 +1,7 @@
 from fastmcp import FastMCP
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from code_engine.replace import replace_function as ts_replace_function
 from pydantic import BaseModel, ConfigDict
 from typing import TypedDict, NotRequired
@@ -18,6 +19,7 @@ from config import (
     list_workspaces,
     resolve_path,
     iter_workspace_files,
+    SKIP_DIRS,
 )
 
 
@@ -141,38 +143,58 @@ def register_tools(mcp: FastMCP):
         if mode in ("auto", "symbol"):
             symbol_results = []
 
-            for path in iter_workspace_files(workspace):
-                if path.suffix.lower() not in LANGUAGES:
-                    continue
+            candidate_paths = [
+                path for path in iter_workspace_files(workspace)
+                if path.suffix.lower() in LANGUAGES
+            ]
 
+            def _scan(path):
                 try:
-                    matches = find_symbols_in_file(str(path), query)
+                    return path, find_symbols_in_file(str(path), query)
                 except Exception:
-                    continue
+                    return path, []
 
-                for m in matches:
-                    m["file"] = str(path.relative_to(root))
-                    body = (
-                        read_function(str(path), m["name"])
-                        if m["type"] == "function"
-                        else read_class(str(path), m["name"])
-                    )
+            # Parsing is CPU-bound but tree-sitter's C parser releases the
+            # GIL, so scanning files concurrently gives a real speedup on
+            # larger workspaces instead of parsing thousands of files
+            # one-by-one on a single thread.
+            with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 4) * 4)) as pool:
+                futures = {pool.submit(_scan, path): path for path in candidate_paths}
 
-                    result = {
-                        "name": m["name"],
-                        "type": m["type"],
-                        "line": m["line"],
-                        "file": str(path.relative_to(root)),
-                        "signature": body.splitlines()[0],
-                    }
+                for future in as_completed(futures):
+                    path, matches = future.result()
 
-                    if include_body:
-                        result["body"] = body
+                    for m in matches:
+                        rel_file = str(path.relative_to(root))
 
-                    symbol_results.append(result)
+                        try:
+                            body = (
+                                read_function(str(path), m["name"])
+                                if m["type"] == "function"
+                                else read_class(str(path), m["name"])
+                            )
+                        except Exception:
+                            continue
+
+                        result = {
+                            "name": m["name"],
+                            "type": m["type"],
+                            "line": m["line"],
+                            "file": rel_file,
+                            "signature": body.splitlines()[0],
+                        }
+
+                        if include_body:
+                            result["body"] = body
+
+                        symbol_results.append(result)
 
                     if len(symbol_results) >= max_results:
-                        return {"results": symbol_results}
+                        for f in futures:
+                            f.cancel()
+                        break
+
+            symbol_results = symbol_results[:max_results]
 
             if mode == "symbol" or symbol_results:
                 return {"results": symbol_results}
@@ -184,6 +206,22 @@ def register_tools(mcp: FastMCP):
             "--hidden",
             "--follow",
             "-uu",
+            "-g", "!node_modules/**",
+            "-g", "!venv/**",
+            "-g", "!.venv/**",
+            "-g", "!env/**",
+            "-g", "!.git/**",
+            "-g", "!__pycache__/**",
+            "-g", "!dist/**",
+            "-g", "!build/**",
+            "-g", "!.dart_tool/**",
+            "-g", "!.pub-cache/**",
+            "-g", "!.idea/**",
+            "-g", "!.vscode/**",
+            "-g", "!target/**",
+            "-g", "!.mypy_cache/**",
+            "-g", "!.pytest_cache/**",
+            "-g", "!**/site-packages/**",
             query,
             str(root),
         ]
@@ -197,10 +235,17 @@ def register_tools(mcp: FastMCP):
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=30,
+                timeout=180,
             )
-        except FileNotFoundError:
-            return {"results": _search_text_fallback(root, query, case_sensitive, max_results)}
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return {
+                "results": _search_text_fallback(
+                    root,
+                    query,
+                    case_sensitive,
+                    max_results,
+                )
+            }
 
         if proc.returncode not in (0, 1):
             return {"results": _search_text_fallback(root, query, case_sensitive, max_results)}
@@ -285,6 +330,7 @@ def register_tools(mcp: FastMCP):
         replace_all: bool = True,
         create_if_missing: bool = False,
         content: str = "",
+        description: str | None = None,
     ) -> str:
         """
         Edit or create files.
@@ -302,7 +348,7 @@ def register_tools(mcp: FastMCP):
             p.write_text(content, encoding="utf-8")
             return {"message": f"Created {path}"}
 
-        if function_name is not None:
+        if function_name:
             if new_function is None:
                 raise ValueError("new_function is required")
 
@@ -314,12 +360,9 @@ def register_tools(mcp: FastMCP):
                 )
             }
 
-        if old_text is not None:
+        if old_text:
             if new_text is None:
                 raise ValueError("new_text is required")
-
-            if not p.exists():
-                raise FileNotFoundError(path)
 
             text = p.read_text(encoding="utf-8")
 
@@ -339,9 +382,13 @@ def register_tools(mcp: FastMCP):
                 "message": f"Replaced {count if replace_all else 1} occurrence(s)"
             }
 
-        raise ValueError(
-            "Specify either function_name/new_function or old_text/new_text."
-        )
+        return {
+            "message": (
+                "Nothing to edit. "
+                "Provide either function_name + new_function, "
+                "or old_text + new_text."
+            )
+        }
     
 
     @mcp.tool(
@@ -373,16 +420,6 @@ def register_tools(mcp: FastMCP):
         if not root.is_dir():
             raise NotADirectoryError(path)
 
-        SKIP = {
-            ".git",
-            "__pycache__",
-            "node_modules",
-            "venv",
-            ".venv",
-            "dist",
-            "build",
-        }
-
         lines = [root.name]
         count = 0
 
@@ -399,7 +436,7 @@ def register_tools(mcp: FastMCP):
 
             for item in items:
 
-                if item.name in SKIP:
+                if item.name in SKIP_DIRS:
                     continue
 
                 if item.is_file() and not show_files:

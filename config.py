@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
@@ -68,17 +69,54 @@ def remove_workspace(name: str):
     save()
 
 def get_workspace(name: str) -> Path:
-    if name not in WORKSPACES:
-        raise RuntimeError(f"Workspace '{name}' not found")
+    p = Path(name)
 
-    return WORKSPACES[name]
+    if p.exists():
+        return p.resolve()
+
+    if name in WORKSPACES:
+        return WORKSPACES[name].resolve()
+
+    raise RuntimeError(f"Workspace '{name}' not found")
+
+SKIP_DIRS = {
+    ".git",
+    "__pycache__",
+    "node_modules",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+    "dist",
+    "build",
+    ".dart_tool",
+    ".idea",
+    ".vscode",
+    ".pub-cache",
+    "target",
+    ".mypy_cache",
+    ".pytest_cache",
+    "site-packages",
+}
+
 
 def iter_workspace_files(name: str):
+    """Walk a workspace yielding files, pruning vendor/build directories.
+
+    Uses os.walk (topdown) so SKIP_DIRS can be pruned in-place instead of
+    filtered after the fact - this avoids ever descending into venv/,
+    node_modules/, .git/, etc, which is both faster and avoids polluting
+    results (e.g. matching an unrelated dependency's source instead of
+    the user's own code).
+    """
+
     root = get_workspace(name)
 
-    for p in root.rglob("*"):
-        if p.is_file():
-            yield p
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+
+        for filename in filenames:
+            yield Path(dirpath) / filename
 
 def set_run_command(workspace: str, command: str):
     if workspace not in WORKSPACES:
