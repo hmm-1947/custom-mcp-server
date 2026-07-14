@@ -90,6 +90,12 @@ def _body_end_byte(node: Node) -> int:
     "function_body") split signature and body into siblings at the same
     level - in that case we extend the span forward to include the body
     (or the terminating ';' for abstract/external members without a body).
+
+    The matching body/';' is not always the *immediate* next sibling -
+    there can be intervening tokens (comments, whitespace-only nodes)
+    depending on the grammar - so we scan forward until we hit one, but
+    stop if we hit another declaration first to avoid swallowing
+    unrelated code.
     """
 
     for child in node.children:
@@ -98,8 +104,14 @@ def _body_end_byte(node: Node) -> int:
 
     sib = node.next_sibling
 
-    if sib is not None and (sib.type in BODY_TYPES or sib.type == ";"):
-        return sib.end_byte
+    while sib is not None:
+        if sib.type in BODY_TYPES or sib.type == ";":
+            return sib.end_byte
+
+        if sib.type in FUNC_TYPES or sib.type in CLASS_TYPES or sib.type == "decorated_definition":
+            break
+
+        sib = sib.next_sibling
 
     return node.end_byte
 
@@ -274,10 +286,14 @@ def find_symbols_in_file(path: str, query: str):
         name = source[name_node.start_byte:name_node.end_byte].decode("utf-8")
 
         if query_lower in name.lower():
+            end_byte = _body_end_byte(node)
+            end_line = source[:end_byte].count(b"\n") + 1
+
             matches.append({
                 "name": name,
                 "type": kind,
                 "line": name_node.start_point[0] + 1,
+                "end_line": end_line,
             })
 
     return matches

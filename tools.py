@@ -2,7 +2,11 @@ from fastmcp import FastMCP
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from code_engine.replace import replace_function as ts_replace_function
+from code_engine.replace import (
+    replace_function as ts_replace_function,
+    replace_lines as ts_replace_lines,
+    fuzzy_find_text,
+)
 from pydantic import BaseModel, ConfigDict
 from typing import TypedDict, NotRequired
 
@@ -28,6 +32,7 @@ class SearchResultModel(BaseModel):
 
     file: str
     line: int
+    end_line: int | None = None
     type: str | None = None
     name: str | None = None
     signature: str | None = None
@@ -118,6 +123,7 @@ def register_tools(mcp: FastMCP):
         query: str,
         mode: str = "auto",
         include_body: bool = False,
+        snippet_lines: int = 0,
         case_sensitive: bool = False,
         max_results: int = 100,
     ):
@@ -132,8 +138,16 @@ def register_tools(mcp: FastMCP):
         - text
 
         include_body:
-        Return full function/class source.
+        Return full function/class source. Prefer snippet_lines instead
+        when you only need to confirm a match, not the whole body.
+
+        snippet_lines:
+        If > 0 and include_body is False, return only this many lines
+        from the start of the function/class body instead of the full
+        source - use this to preview a match cheaply.
         """
+
+        print(f"[tool] search(workspace={workspace!r}, query={query!r}, mode={mode!r})")
 
         if mode not in ("auto", "symbol", "text"):
             raise ValueError("mode must be auto, symbol or text")
@@ -180,12 +194,18 @@ def register_tools(mcp: FastMCP):
                             "name": m["name"],
                             "type": m["type"],
                             "line": m["line"],
+                            "end_line": m.get("end_line"),
                             "file": rel_file,
                             "signature": body.splitlines()[0],
                         }
 
                         if include_body:
                             result["body"] = body
+                        elif snippet_lines > 0:
+                            body_lines = body.splitlines()
+                            result["body"] = "\n".join(body_lines[:snippet_lines])
+                            if len(body_lines) > snippet_lines:
+                                result["body"] += f"\n... [{len(body_lines) - snippet_lines} more lines]"
 
                         symbol_results.append(result)
 
@@ -293,6 +313,8 @@ def register_tools(mcp: FastMCP):
         - remove
         """
 
+        print(f"[tool] workspace(action={action!r}, name={name!r})")
+
         action = action.lower()
 
         if action == "list":
@@ -327,6 +349,8 @@ def register_tools(mcp: FastMCP):
         new_function: str | None = None,
         old_text: str | None = None,
         new_text: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
         replace_all: bool = True,
         create_if_missing: bool = False,
         content: str = "",
@@ -335,9 +359,24 @@ def register_tools(mcp: FastMCP):
         """
         Edit or create files.
 
-        Replace a function or text.
+        Replace a function, a line range, or exact text - only the
+        targeted region is touched, everything else stays untouched.
         Set create_if_missing=True to create a new file.
+
+        Prefer the smallest targeted edit that does the job:
+        - old_text + new_text for a specific snippet (exact match, with a
+          whitespace-tolerant fallback if the exact text isn't found)
+        - start_line + end_line + new_text to replace an exact line range
+        - function_name + new_function to replace a whole function/method
         """
+
+        kind = (
+            "function_replace" if function_name
+            else "line_replace" if start_line is not None
+            else "text_replace" if old_text
+            else "create/no-op"
+        )
+        print(f"[tool] edit(workspace={workspace!r}, path={path!r}, kind={kind})")
 
         p = resolve_path(workspace, path)
         if not p.exists():
@@ -360,6 +399,21 @@ def register_tools(mcp: FastMCP):
                 )
             }
 
+        if start_line is not None:
+            if end_line is None:
+                raise ValueError("end_line is required when start_line is set")
+            if new_text is None:
+                raise ValueError("new_text is required")
+
+            return {
+                "message": ts_replace_lines(
+                    str(p),
+                    start_line,
+                    end_line,
+                    new_text,
+                )
+            }
+
         if old_text:
             if new_text is None:
                 raise ValueError("new_text is required")
@@ -369,7 +423,18 @@ def register_tools(mcp: FastMCP):
             count = text.count(old_text)
 
             if count == 0:
-                return {"message": "Text not found"}
+                found = fuzzy_find_text(text, old_text)
+
+                if found is None:
+                    return {"message": "Text not found"}
+
+                start, end = found
+                text = text[:start] + new_text + text[end:]
+                p.write_text(text, encoding="utf-8")
+
+                return {
+                    "message": "Replaced 1 occurrence (fuzzy whitespace match)"
+                }
 
             if replace_all:
                 text = text.replace(old_text, new_text)
@@ -411,6 +476,8 @@ def register_tools(mcp: FastMCP):
         - max_depth: folder depth
         - show_files: include files
         """
+
+        print(f"[tool] project_tree(workspace={workspace!r}, path={path!r})")
 
         root = resolve_path(workspace, path)
 
