@@ -297,3 +297,36 @@ def find_symbols_in_file(path: str, query: str):
             })
 
     return matches
+
+
+def find_symbols_in_file_with_bodies(path: str, query: str):
+    """Same as find_symbols_in_file, but also returns each match's source
+    body from the single shared parse - avoids re-parsing the same file
+    once per match the way calling read_function/read_class separately
+    for every hit would.
+    """
+
+    tree, source = parse_file(path)
+
+    query_lower = query.lower()
+    matches = []
+
+    for node, name_node, kind in _iter_definitions(tree.root_node):
+        name = source[name_node.start_byte:name_node.end_byte].decode("utf-8")
+
+        if query_lower not in name.lower():
+            continue
+
+        end_byte = _body_end_byte(node)
+        end_line = source[:end_byte].count(b"\n") + 1
+        body = source[node.start_byte:end_byte].decode("utf-8")
+
+        matches.append({
+            "name": name,
+            "type": kind,
+            "line": name_node.start_point[0] + 1,
+            "end_line": end_line,
+            "body": body,
+        })
+
+    return matches
