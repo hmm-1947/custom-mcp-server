@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from .finder import find_function, _body_end_byte
@@ -8,6 +9,20 @@ def replace_function(
     function_name: str,
     new_function: str,
 ):
+    new_source, _, _ = build_function_replacement(path, function_name, new_function)
+    Path(path).write_bytes(new_source)
+    return f"Replaced function '{function_name}'"
+
+
+def build_function_replacement(
+    path: str,
+    function_name: str,
+    new_function: str,
+) -> tuple[bytes, int, int]:
+    """Build a function replacement without writing it to disk.
+
+    Returns the proposed bytes plus the first and last affected line numbers.
+    """
     node, source = find_function(path, function_name)
 
     if node is None:
@@ -25,10 +40,9 @@ def replace_function(
         + new_function.encode("utf-8")
         + source[end_byte:]
     )
-
-    Path(path).write_bytes(new_source)
-
-    return f"Replaced function '{function_name}'"
+    start_line = source.count(b"\n", 0, node.start_byte) + 1
+    end_line = start_line + new_function.count("\n")
+    return new_source, start_line, end_line
 
 
 def fuzzy_find_text(text: str, old_text: str):
@@ -38,21 +52,12 @@ def fuzzy_find_text(text: str, old_text: str):
     fails, so the LLM doesn't have to reproduce whitespace perfectly.
     """
 
-    import re
-
-    old_lines = old_text.split("\n")
-    pattern_lines = [
+    pattern = "\n".join(
         r"[ \t]*" + re.escape(line.strip()) + r"[ \t]*"
-        for line in old_lines
-    ]
-    pattern = r"\n".join(pattern_lines)
-
+        for line in old_text.split("\n")
+    )
     match = re.search(pattern, text)
-
-    if match is None:
-        return None
-
-    return match.start(), match.end()
+    return None if match is None else match.span()
 
 
 def replace_lines(
@@ -76,13 +81,8 @@ def replace_lines(
             f"Invalid line range {start_line}-{end_line} for file with {total} lines"
         )
 
-    new_lines = new_text.split("\n")
-
-    result_lines = lines[:start_line - 1] + new_lines + lines[end_line:]
-
-    new_content = "\n".join(result_lines)
-    if had_trailing_newline:
-        new_content += "\n"
+    result_lines = lines[:start_line - 1] + new_text.split("\n") + lines[end_line:]
+    new_content = "\n".join(result_lines) + ("\n" if had_trailing_newline else "")
 
     p.write_text(new_content, encoding="utf-8")
 
