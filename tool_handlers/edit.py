@@ -25,6 +25,25 @@ def _should_validate(path: Path, validate: bool | None) -> bool:
     return validate if validate is not None else path.suffix.lower() in STRUCTURAL_EXTENSIONS
 
 
+def _match_previews(text: str, old_text: str) -> list[dict]:
+    """Return every non-overlapping exact match with three surrounding lines."""
+    matches = []
+    start_index = 0
+    while True:
+        match_index = text.find(old_text, start_index)
+        if match_index < 0:
+            return matches
+        start_line = text.count("\n", 0, match_index) + 1
+        end_line = start_line + old_text.count("\n")
+        matches.append({
+            "index": len(matches) + 1,
+            "start_line": start_line,
+            "end_line": end_line,
+            "context": _line_context(text, start_line, end_line, window=3),
+        })
+        start_index = match_index + len(old_text)
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(output_schema=EDIT_OUTPUT_SCHEMA)
     def edit(
@@ -45,6 +64,7 @@ def register(mcp: FastMCP) -> None:
         validate_structure: bool | None = None,
         dry_run: bool = False,
         expected_start_text: str | None = None,
+        preview_matches: bool = False,
     ) -> dict:
         """Create or edit a file with optional context and structural validation.
 
@@ -109,9 +129,37 @@ def register(mcp: FastMCP) -> None:
                 affected_end = start_line + new_text.count("\n")
                 message = f"Replaced lines {start_line}-{end_line}"
             elif old_text:
+                count = text.count(old_text)
+                if preview_matches:
+                    if count:
+                        previews = _match_previews(text, old_text)
+                        return {
+                            "message": f"Preview: found {count} exact match(es); no edit applied",
+                            "matches": previews,
+                            "match_count": count,
+                            "preview_matches": True,
+                        }
+
+                    found = fuzzy_find_text(text, old_text)
+                    if found is None:
+                        return {"message": "Preview: text not found", "matches": [], "match_count": 0}
+                    replacement_start, replacement_end = found
+                    start_line = text.count("\n", 0, replacement_start) + 1
+                    end_line = text.count("\n", 0, replacement_end) + 1
+                    return {
+                        "message": "Preview: found 1 fuzzy whitespace match; no edit applied",
+                        "matches": [{
+                            "index": 1,
+                            "start_line": start_line,
+                            "end_line": end_line,
+                            "context": _line_context(text, start_line, end_line, window=3),
+                        }],
+                        "match_count": 1,
+                        "preview_matches": True,
+                    }
+
                 if new_text is None:
                     raise ValueError("new_text is required")
-                count = text.count(old_text)
                 if count == 0:
                     found = fuzzy_find_text(text, old_text)
                     if found is None:
@@ -139,6 +187,12 @@ def register(mcp: FastMCP) -> None:
         )
         context_window = context_lines or 15
         response = {"message": f"Dry run: {message}" if dry_run else message}
+        if old_text and 'count' in locals() and count > 1:
+            response["warning"] = (
+                f"old_text occurs {count} times in this file; "
+                + ("all matches were replaced" if replace_all else "only the first match was replaced")
+                + ". Use preview_matches=True to inspect every match before editing."
+            )
         if should_include_context:
             response["context"] = _line_context(proposed, affected_start, affected_end, context_window)
         if previous_line_edit is not None:

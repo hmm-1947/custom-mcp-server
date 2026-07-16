@@ -52,6 +52,10 @@ EDIT_OUTPUT_SCHEMA = {
         "previous_line_edit": {"type": "object"},
         "validation": {"type": "object"},
         "dry_run": {"type": "boolean"},
+        "warning": {"type": "string"},
+        "matches": {"type": "array"},
+        "match_count": {"type": "integer"},
+        "preview_matches": {"type": "boolean"},
     },
     "required": ["message"],
 }

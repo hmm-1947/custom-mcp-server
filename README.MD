@@ -18,3 +18,8 @@ To Run:
 - create an ngrok tunnel for port 8000
 - copy the ngrok url
 - add the url to the custom mcp section of your llm
+
+
+Claude Skills:
+- There's SKILL.md file
+- use it with claude to get more accurate results
