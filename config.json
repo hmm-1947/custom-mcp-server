@@ -1,9 +1,6 @@
 {
     "workspaces": {
-        "joshua-mcp": "/home/adminmint/development/projects/mcpserver/joshua-mcp",
-        "livekitapp": "/home/adminmint/development/projects/LiveKitFinal/livekitapp",
-        "backend": "/home/adminmint/development/projects/LiveKitFinal/backend",
-        "harness": "/home/adminmint/development/projects/harness"
+        "kernel": "/home/adminmint/development/projects/kernels"
     },
     "run_commands": {}
 }

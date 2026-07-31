@@ -52,9 +52,10 @@ def fuzzy_find_text(text: str, old_text: str):
     fails, so the LLM doesn't have to reproduce whitespace perfectly.
     """
 
-    pattern = "\n".join(
+    # \r?\n so a CRLF file still matches an LF-separated snippet.
+    pattern = r"\r?\n".join(
         r"[ \t]*" + re.escape(line.strip()) + r"[ \t]*"
-        for line in old_text.split("\n")
+        for line in old_text.replace("\r\n", "\n").split("\n")
     )
     match = re.search(pattern, text)
     return None if match is None else match.span()
