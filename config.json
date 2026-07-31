@@ -1,8 +1,9 @@
 {
     "workspaces": {
-        "livekit_backend_python": "/home/adminmint/development/Projects/LiveKitFinal/backend",
-        "livekit_frontend_flutter": "/home/adminmint/development/Projects/LiveKitFinal/livekitapp",
-        "joshua-mcp": "/home/adminmint/development/Projects/mcpserver/joshua-mcp"
+        "joshua-mcp": "/home/adminmint/development/projects/mcpserver/joshua-mcp",
+        "livekitapp": "/home/adminmint/development/projects/LiveKitFinal/livekitapp",
+        "backend": "/home/adminmint/development/projects/LiveKitFinal/backend",
+        "harness": "/home/adminmint/development/projects/harness"
     },
     "run_commands": {}
 }

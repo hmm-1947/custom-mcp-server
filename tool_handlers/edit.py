@@ -64,13 +64,29 @@ def register(mcp: FastMCP) -> None:
         validate_structure: bool | None = None,
         dry_run: bool = False,
         expected_start_text: str | None = None,
+        expected_end_text: str | None = None,
         preview_matches: bool = False,
     ) -> dict:
         """Create or edit a file with optional context and structural validation.
 
+        PREFER LINE-RANGE EDITS to save tokens: after reading a file with
+        read_files (which shows line numbers), call this with start_line,
+        end_line, and new_text set to just the replacement code. You do NOT
+        need to reproduce the old code anywhere — only the new code. This is
+        far cheaper than old_text/new_text matching, which requires writing
+        out the entire block being replaced verbatim just to identify it.
+
+        Use old_text/new_text only when you don't have reliable line numbers
+        (e.g. editing based on a search result without a full file read) or
+        when the same snippet might appear in multiple places and you want
+        preview_matches=True to disambiguate first.
+
+        For a brand-new file, set create_if_missing=True and either content
+        (the whole file) or start_line=1/end_line=1/new_text=<whole file>.
+
         Line-range edits validate known brace-based languages and return 15
-        surrounding lines by default. Supply expected_start_text to reject a
-        stale line number before making that edit.
+        surrounding lines by default. Supply expected_start_text and/or
+        expected_end_text to reject a stale line range before making that edit.
         """
         kind = (
             "function_replace" if function_name else "line_replace"
@@ -84,13 +100,40 @@ def register(mcp: FastMCP) -> None:
         target = resolve_path(workspace, path)
         previous_line_edit = LAST_LINE_EDITS.get(str(target))
 
-        if not target.exists():
-            if not create_if_missing:
+        is_empty_existing = target.exists() and target.stat().st_size == 0
+        # A "whole file write" can arrive via `content`, or via the new-file
+        # fallback pattern of start_line/end_line/new_text with no old_text or
+        # function_name. This must be recognized whenever the target doesn't
+        # exist yet (any start_line value), or new_text is silently dropped and
+        # an empty file gets created while the tool reports success.
+        creating_new_file = not target.exists()
+        fallback_new_text = (
+            new_text if (creating_new_file and start_line is not None and not old_text and not function_name)
+            else None
+        )
+        effective_content = content or fallback_new_text or ""
+        whole_file_write = bool(effective_content) and not old_text and not function_name
+
+        if creating_new_file or (whole_file_write and (is_empty_existing or create_if_missing)):
+            if creating_new_file and not create_if_missing:
                 raise FileNotFoundError(path)
-            proposed = content
+            if creating_new_file and not effective_content and (old_text or function_name):
+                raise ValueError(
+                    f"{path} does not exist and create_if_missing=True, but old_text/function_name "
+                    "were given instead of new_text/content. A brand-new file has nothing to match "
+                    "against — pass new_text (with start_line/end_line) or content for new files."
+                )
+            proposed = effective_content
             affected_start = 1
-            affected_end = max(1, content.count("\n") + 1)
-            message = f"Created {path}"
+            affected_end = max(1, effective_content.count("\n") + 1)
+            message = f"Created {path}" if creating_new_file else f"Overwrote {path}"
+
+
+        elif is_empty_existing and start_line is not None:
+            proposed = new_text if new_text is not None else ""
+            affected_start = 1
+            affected_end = max(1, proposed.count("\n") + 1)
+            message = f"Wrote content to empty file {path}"
         else:
             text = target.read_text(encoding="utf-8")
 
@@ -116,6 +159,15 @@ def register(mcp: FastMCP) -> None:
                         "line": start_line,
                         "expected": expected_start_text,
                         "actual": actual_start,
+                    }
+
+                actual_end = lines[end_line - 1]
+                if expected_end_text is not None and expected_end_text not in actual_end:
+                    return {
+                        "message": "Line-range edit aborted: end line no longer matches expected text",
+                        "line": end_line,
+                        "expected": expected_end_text,
+                        "actual": actual_end,
                     }
 
                 had_trailing_newline = text.endswith("\n")

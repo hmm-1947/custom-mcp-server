@@ -69,13 +69,12 @@ def remove_workspace(name: str):
     save()
 
 def get_workspace(name: str) -> Path:
-    p = Path(name)
-
-    if p.exists():
-        return p.resolve()
-
     if name in WORKSPACES:
         return WORKSPACES[name].resolve()
+
+    p = Path(name)
+    if p.exists():
+        return p.resolve()
 
     raise RuntimeError(f"Workspace '{name}' not found")
 
