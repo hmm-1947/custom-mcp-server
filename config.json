@@ -1,6 +1,15 @@
 {
     "workspaces": {
-        "kernel": "/home/adminmint/development/projects/kernels"
+        "kernel": "\\home\\adminmint\\development\\projects\\kernels",
+        "airsend": "\\home\\adminmint\\development\\projects\\airsend",
+        "flutter": "\\home\\adminmint\\development\\projects\\LiveKitFinal\\livekitapp",
+        "backend": "\\home\\adminmint\\development\\projects\\LiveKitFinal\\backend",
+        "livekitapp": "\\home\\adminmint\\development\\projects\\LiveKitFinal\\livekitapp",
+        "livekit-backend": "\\home\\adminmint\\development\\projects\\LiveKitFinal\\backend",
+        "livekitapp2": "D:\\projects\\LiveKitFinal\\livekitapp",
+        "lkroot": "D:\\projects\\LiveKitFinal",
+        "lkbackend": "D:\\projects\\LiveKitFinal\\backend",
+        "adwall": "D:\\projects\\Adwall"
     },
     "run_commands": {}
 }
