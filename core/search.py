@@ -1,7 +1,7 @@
-"""Single shared ripgrep entry point.
+"""Single shared text-search entry point.
 
-Both symbol search and impact analysis go through here so that exclusion
-rules, timeouts and the pure-Python fallback behave identically everywhere.
+Uses ripgrep when it is installed and falls back to a pure-Python scan when it
+is not, so exclusion rules and results are identical either way.
 """
 
 from __future__ import annotations

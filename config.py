@@ -1,152 +1,109 @@
+"""Saved project roots and path resolution.
+
+A workspace is just a short alias for a directory on this machine. Nothing
+requires one: every tool also accepts an absolute path, and `run` works with
+no workspace at all.
+"""
+
+from __future__ import annotations
+
 import json
-import os
 from pathlib import Path
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
-WORKSPACES = {}
-RUN_COMMANDS = {}
+WORKSPACES: dict[str, Path] = {}
 
 
-def load():
-    global WORKSPACES, RUN_COMMANDS
+def load() -> None:
+    global WORKSPACES
 
     if not CONFIG_FILE.exists():
         return
 
-    data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
 
     WORKSPACES = {
         name: Path(path)
-        for name, path in data.get("workspaces", {}).items()
+        for name, path in (data.get("workspaces") or {}).items()
     }
 
-    RUN_COMMANDS = data.get("run_commands", {})
 
-
-def save():
+def save() -> None:
     CONFIG_FILE.write_text(
         json.dumps(
-            {
-                "workspaces": {
-                    name: str(path)
-                    for name, path in WORKSPACES.items()
-                },
-                "run_commands": RUN_COMMANDS,
-            },
+            {"workspaces": {name: str(path) for name, path in WORKSPACES.items()}},
             indent=4,
         ),
         encoding="utf-8",
     )
 
 
-def add_workspace(name: str, path: str):
-    p = Path(path).resolve()
+def list_workspaces() -> dict[str, str]:
+    return {name: str(path) for name, path in WORKSPACES.items()}
 
-    if not p.exists():
+
+def add_workspace(name: str, path: str) -> Path:
+    resolved = Path(path).expanduser().resolve()
+
+    if not resolved.exists():
         raise FileNotFoundError(path)
-
-    if not p.is_dir():
+    if not resolved.is_dir():
         raise NotADirectoryError(path)
 
-    WORKSPACES[name] = p
-
+    WORKSPACES[name] = resolved
     save()
+    return resolved
 
-def list_workspaces() -> dict[str, str]:
-    return {
-        name: str(path)
-        for name, path in WORKSPACES.items()
-    }
 
-def remove_workspace(name: str):
+def remove_workspace(name: str) -> None:
     if name not in WORKSPACES:
-        raise RuntimeError(f"Workspace '{name}' not found")
+        raise ValueError(f"Workspace '{name}' not found")
 
     WORKSPACES.pop(name, None)
-    RUN_COMMANDS.pop(name, None)
-
     save()
+
 
 def get_workspace(name: str) -> Path:
+    """Resolve an alias - or a plain directory path - to a directory."""
     if name in WORKSPACES:
-        return WORKSPACES[name].resolve()
+        return WORKSPACES[name].expanduser().resolve()
 
-    p = Path(name)
-    if p.exists():
-        return p.resolve()
+    candidate = Path(name).expanduser()
+    if candidate.is_dir():
+        return candidate.resolve()
 
-    raise RuntimeError(f"Workspace '{name}' not found")
-
-SKIP_DIRS = {
-    ".git",
-    "__pycache__",
-    "node_modules",
-    "venv",
-    ".venv",
-    "env",
-    ".env",
-    "dist",
-    "build",
-    ".dart_tool",
-    ".idea",
-    ".vscode",
-    ".pub-cache",
-    "target",
-    ".mypy_cache",
-    ".pytest_cache",
-    "site-packages",
-}
+    raise ValueError(
+        f"'{name}' is neither a registered workspace nor an existing directory. "
+        f"Known workspaces: {', '.join(sorted(WORKSPACES)) or 'none'}"
+    )
 
 
-def iter_workspace_files(name: str):
-    """Walk a workspace yielding files, pruning vendor/build directories.
+def resolve_path(workspace: str, path: str) -> Path:
+    """Turn (workspace, path) into an absolute path.
 
-    Uses os.walk (topdown) so SKIP_DIRS can be pruned in-place instead of
-    filtered after the fact - this avoids ever descending into venv/,
-    node_modules/, .git/, etc, which is both faster and avoids polluting
-    results (e.g. matching an unrelated dependency's source instead of
-    the user's own code).
+    An absolute `path` is used as given. A relative one is joined to the
+    workspace when there is one, and to the current directory when there is not.
     """
+    target = Path(path or ".").expanduser()
 
-    root = get_workspace(name)
+    if target.is_absolute():
+        return target.resolve()
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+    if workspace:
+        return (get_workspace(workspace) / target).resolve()
 
-        for filename in filenames:
-            yield Path(dirpath) / filename
-
-def set_run_command(workspace: str, command: str):
-    if workspace not in WORKSPACES:
-        raise RuntimeError(f"Workspace '{workspace}' not found")
-
-    RUN_COMMANDS[workspace] = command
-
-    save()
+    return target.resolve()
 
 
-def get_run_command(workspace: str):
-    if workspace not in RUN_COMMANDS:
-        raise RuntimeError(
-            f"Run command not set for workspace '{workspace}'"
-        )
-
-    return RUN_COMMANDS[workspace]
-
-
-def resolve_path(
-    workspace: str,
-    path: str,
-) -> Path:
-    root = get_workspace(workspace).resolve()
-
-    target = (root / path).resolve()
-
-    if target != root and root not in target.parents:
-        raise PermissionError("Access outside the workspace is not allowed")
-
-    return target
+def resolve_dir(location: str) -> Path:
+    """Directory for a command to run in. Empty means the current directory."""
+    if not location:
+        return Path.cwd()
+    return get_workspace(location)
 
 
 load()

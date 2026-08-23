@@ -1,22 +1,20 @@
-"""Impact analysis: what else has to change.
+"""Impact analysis: what else a change may touch.
 
-A localized edit is only correct if every dependent site agrees with it. Given
-the files (and optionally symbols) a task touches, this module finds:
+Given a set of files, this finds:
 
-  * reverse dependencies - modules that import the edited file
+  * reverse dependencies - modules that import the file
   * symbol call sites    - references to the functions/classes it defines
   * sibling artefacts    - schemas, migrations, routes, serializers, tests,
                            fixtures and config keys that usually move together
 
-Results are ranked and recorded on the session, so the harness can keep
-reminding the model about candidates it has not looked at yet.
+Opt-in: only used when find(action='impact') is called.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from . import ripgrep
+from . import search as ripgrep
 
 #: Directory/file-name hints for artefacts that co-change with code.
 RELATED_HINTS = (

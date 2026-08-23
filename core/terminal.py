@@ -1,37 +1,17 @@
-"""Terminal access.
+"""Command execution.
 
-Validation and reasoning must come from executed commands, not from what a
-model believes about a project. This module is the single execution point:
-everything else in the harness (validation plans, git state, environment
-probes, diagnostics) runs through `execute`, so every command is uniformly
-timed, clipped, recorded and confined to the workspace.
+Everything that runs a shell command goes through `execute`, so timing, output
+clipping and the destructive-command guard behave identically everywhere.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-
-#: Commands the harness expects to be able to reach for exploration,
-#: inspection, validation and environment diagnosis. Presence is probed, never
-#: assumed - a missing tool is a fact to report, not a reason to guess.
-KNOWN_TOOLS = (
-    # exploration / inspection
-    "find", "grep", "rg", "sed", "awk", "head", "tail", "cat", "ls", "tree",
-    "pwd", "which", "file", "wc", "diff", "stat", "env",
-    # vcs
-    "git",
-    # language toolchains
-    "python", "python3", "pip", "pip3", "uv", "pytest", "ruff", "mypy",
-    "flutter", "dart", "node", "npm", "yarn", "pnpm", "npx", "tsc",
-    "cargo", "rustc", "go", "java", "javac", "gradle", "mvn",
-    "cmake", "make", "ninja", "gcc", "clang", "docker",
-)
 
 #: Refused outright. Not a sandbox - a guard against catastrophic typos in a
 #: loop that is allowed to run commands unattended.
@@ -39,6 +19,7 @@ DESTRUCTIVE_PATTERNS = (
     (r"\brm\s+(-[a-zA-Z]*\s+)*(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+/(\s|$)", "recursive delete of /"),
     (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*\s+(~|\$HOME)(/\s*)?$", "recursive delete of home directory"),
     (r"\bmkfs(\.|\s)", "filesystem format"),
+    (r"\bformat\s+[a-zA-Z]:", "drive format"),
     (r"\bdd\b[^\n]*\bof=/dev/(sd|nvme|hd|disk)", "raw write to a block device"),
     (r">\s*/dev/(sd|nvme|hd|disk)", "raw write to a block device"),
     (r"\b(shutdown|reboot|halt|poweroff)\b", "host power state change"),
@@ -51,7 +32,7 @@ DESTRUCTIVE_PATTERNS = (
 )
 
 DEFAULT_TIMEOUT = 300
-MAX_OUTPUT_CHARS = 24000
+MAX_OUTPUT_CHARS = 20000
 
 
 @dataclass
@@ -73,13 +54,15 @@ class CommandResult:
 
     def to_dict(self) -> dict:
         data = asdict(self)
+        data.pop("started_at", None)
         data["ok"] = self.ok
+        if data["refused"] is None:
+            data.pop("refused")
+        if not data["clipped"]:
+            data.pop("clipped")
+        if not data["timed_out"]:
+            data.pop("timed_out")
         return data
-
-    def tail(self, limit: int = 2000) -> str:
-        """Most diagnostic value per character: the end of stderr, then stdout."""
-        blob = (self.stderr or "") + ("\n" if self.stderr and self.stdout else "") + (self.stdout or "")
-        return blob[-limit:]
 
 
 def refusal_reason(command: str) -> str | None:
@@ -107,7 +90,6 @@ def execute(
     cwd: Path,
     *,
     timeout: int = DEFAULT_TIMEOUT,
-    env_overrides: dict[str, str] | None = None,
     allow_destructive: bool = False,
 ) -> CommandResult:
     """Run a shell command in `cwd` and capture everything about it."""
@@ -136,9 +118,6 @@ def execute(
     environment.setdefault("PYTHONUNBUFFERED", "1")
     environment.setdefault("CI", "1")          # keeps npm/flutter non-interactive
     environment.setdefault("NO_COLOR", "1")
-    environment.setdefault("TERM", "dumb")
-    if env_overrides:
-        environment.update(env_overrides)
 
     try:
         process = subprocess.run(
@@ -182,43 +161,3 @@ def _decode(blob) -> str:
     if isinstance(blob, bytes):
         return blob.decode("utf-8", errors="replace")
     return str(blob)
-
-
-def tool_path(name: str) -> str | None:
-    return shutil.which(name)
-
-
-_VERSION_FLAGS = {
-    "java": "-version", "javac": "-version", "go": "version", "docker": "--version",
-}
-_VERSIONLESS = frozenset({
-    "find", "grep", "sed", "awk", "head", "tail", "cat", "ls", "pwd", "which",
-    "file", "wc", "stat", "env", "tree", "diff",
-})
-
-
-def describe_environment(cwd: Path, probe_versions: bool = False) -> dict:
-    """Report which known development tools actually exist here."""
-    available: dict[str, str] = {}
-    missing: list[str] = []
-    for name in KNOWN_TOOLS:
-        path = tool_path(name)
-        if path is None:
-            missing.append(name)
-            continue
-        version = ""
-        if probe_versions and name not in _VERSIONLESS:
-            flag = _VERSION_FLAGS.get(name, "--version")
-            result = execute(f"{name} {flag}", cwd, timeout=20)
-            version = ((result.stdout or result.stderr).strip().splitlines() or [""])[0][:120]
-        available[name] = version or path
-    return {
-        "cwd": str(cwd),
-        "available": available,
-        "missing": missing,
-        "note": (
-            "Absent tools are facts about this machine. If a validation step needs a "
-            "missing tool, that is an environment limitation - record it with "
-            "task(action='block'), do not rewrite working code around it."
-        ),
-    }

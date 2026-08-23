@@ -1,97 +1,63 @@
-# Joshua MCP — an engineering harness
+# MCP Local Code Editing Server
 
-This is not a passive file editor. It is a harness that drives a connected LLM
-through a disciplined engineering workflow and refuses actions taken out of
-order.
-
-```
-orient -> explore -> read -> edit -> validate -> (diagnose -> repair -> validate)* -> done
-```
-
-Every tool call reports into an active task. Every response carries a `workflow`
-envelope with the current phase, what is still `outstanding`, and the
-`next_actions` required. The methodology is also sent to the client as the
-server's MCP `instructions`, so a model receives the contract before its first
-call.
-
-## What the harness enforces
-
-| Gate | Why |
-|---|---|
-| `edit` refuses a file that was never read | an edit from memory is a guess |
-| `edit` refuses a file that changed on disk since the read | stale line numbers corrupt files |
-| `edit` refuses a whole-file rewrite of an existing file | localized changes preserve unrelated code |
-| `edit` refuses an `old_text` that matches more than once | silent multi-site rewrites are the most common damage |
-| `edit` refuses a change that unbalances brackets | cheap structural check before writing |
-| `task(complete)` refuses unless the last validation passed | confidence must come from exit codes |
-| `task(complete)` refuses if anything was edited after that pass | a change after a green run is unproven |
-| `task(complete)` surfaces checks that were skipped | a skipped test is not a passing test |
-| `task(block)` refuses without executed evidence | "the environment is broken" needs proof |
-
-Line endings, indentation style and the trailing newline are preserved, and
-formatting drift is reported rather than silently applied.
+An MCP server that lets a connected LLM read, edit and run code on this machine.
+It is a small, direct toolbox: locate the code, read it, change it, and stop.
+There is no enforced workflow, no validation stage and no repair loop, so a
+change costs only the tokens the change actually needs.
 
 ## Tools
 
 | Tool | Role |
 |---|---|
-| `task` | start / orient / status / next / note / block / unblock / complete / abandon |
-| `workspace` | register and resolve project roots |
-| `explore` | repository layout, file lists, symbol inventory |
-| `find_references` | locate a symbol everywhere, with context and tree-sitter definitions |
-| `impact` | reverse imports, symbol call sites, co-changing migrations/schemas/routes/config/tests |
-| `read_files` | partial reads with line numbers, recorded in the task ledger |
-| `edit` | localized line-range, exact-text, function or new-file edits, gated |
-| `validate` | derives and runs the project's own checks, then diagnoses failures |
-| `run` | full shell access inside the workspace |
-| `git_state` | status, diff, staged diff, log, branch, conflicts, overview |
+| `workspace` | list / add / remove saved project directories (aliases) |
+| `find` | `search`, `tree`, `files`, `symbols`, `impact` |
+| `read` | file contents with line numbers, whole file or a region |
+| `edit` | line-range, exact-text, function or whole-file changes; creates files |
+| `run` | any shell command, in any directory on this machine |
 
-## Validation
+Paths: pass `workspace='<alias>'` with a relative path, or an absolute path.
+Neither is required by `run`.
 
-`validate()` reads the repository's own markers — manifests, lockfiles, script
-definitions, test layout — checks what is actually installed, and derives a
-tiered plan that runs cheapest-first:
+## How a change is expected to go
 
-* `syntax` — `py_compile`, `tsc --noEmit`, `cargo check`, `go build`, compile targets
-* `static` — `ruff`, `mypy`, `dart analyze`, `dart format --set-exit-if-changed`, project `lint`/`typecheck` scripts, `go vet`, `clippy`
-* `test` — `pytest` (or the stdlib `unittest` runner when pytest is absent), `flutter test`, `npm test`, `cargo test`, `go test`, gradle/maven
+```
+find -> read -> edit -> report
+```
 
-Depth is selectable (`quick`, `standard`, `full`). Steps whose tool is missing are
-reported as skipped with a reason rather than dropped. Every step captures
-stdout, stderr, exit code and duration.
+Checking is optional and on request. If the user asks whether something works,
+or the change is large enough to be in doubt, the model runs the project's own
+command with `run` (`flutter analyze`, `dart analyze`, `pytest`, `npm run
+build`, `tsc --noEmit`, `go build`, `cargo check`) and reports the exit code.
+Small edits need no check at all.
 
-## Failure diagnosis
+## What `edit` still refuses
 
-On failure the harness classifies the cause and says what to do:
+Only the two cases where an automated editor silently damages a file:
 
-* **code** — extracts `file:line` locations from the toolchain output and sends
-  the model back to `read_files` before it may repair
-* **environment** — missing executable, absent dependency, PEP 668 interpreter,
-  offline network, disk full, permissions, unconfigured SDK, docker daemon down,
-  database unreachable, timeout — and proposes the shell commands that confirm
-  it. Working code is not rewritten to dodge an environment fault.
-* **unknown** — instructs the model to gather more evidence rather than assume
-  the implementation is wrong.
+* an `old_text` that matches more than once - it returns every occurrence with
+  line numbers instead of guessing (`replace_all=True` to override)
+* a replacement that would leave brackets unbalanced in a C-family or Dart file
+
+Line endings, indentation and the trailing newline are preserved, and
+formatting drift is reported rather than silently applied.
+
+`run` refuses a short list of catastrophic commands (recursive deletes of `/`,
+disk formats, force pushes, `git reset --hard`, `git clean -f`, piping a remote
+script into a shell). Everything else runs.
 
 ## Layout
 
 ```
-server.py              entry point; advertises the methodology as MCP instructions
-tools.py               tool registration + the engineering_task prompt
+server.py              entry point; sends the usage contract as MCP instructions
+tools.py               tool registration
 config.py              workspaces and path resolution
-harness/
-  phases.py            the workflow definition
-  session.py           per-task ledger (searched/read/edited, digests, history) + phase machine
-  guidance.py          turns ledger state into the next required action
+core/
   terminal.py          the only place a command is executed
-  ripgrep.py           the only place a search is executed
-  project.py           project detection + validation-plan derivation
-  diagnose.py          code vs environment failure classification
-  impact.py            what else a change affects
-  gitstate.py          repository state
+  search.py            the only place a search is executed (ripgrep, with fallback)
   structure.py         bracket-balance guard for edits
+  impact.py            what else a change may affect (used by find(action='impact'))
   instructions.py      the contract sent to every client
-tool_handlers/         thin adapters: validate input, call the harness, attach guidance
+tool_handlers/         one module per tool
 code_engine/           tree-sitter parsing, symbol lookup, function replacement
 ```
 
@@ -104,6 +70,8 @@ venv/bin/python server.py                      # streamable-http on 127.0.0.1:80
 venv/bin/python server.py --transport stdio    # for stdio clients
 venv/bin/python server.py --port 9000
 ```
+
+On Windows use `venv\Scripts\python.exe server.py`.
 
 Expose it to a remote client with a tunnel (e.g. ngrok) and add the URL to the
 client's custom MCP configuration.

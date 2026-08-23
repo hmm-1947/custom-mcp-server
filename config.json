@@ -9,7 +9,7 @@
         "livekitapp2": "D:\\projects\\LiveKitFinal\\livekitapp",
         "lkroot": "D:\\projects\\LiveKitFinal",
         "lkbackend": "D:\\projects\\LiveKitFinal\\backend",
-        "adwall": "D:\\projects\\Adwall"
-    },
-    "run_commands": {}
+        "adwall": "D:\\projects\\Adwall",
+        "gulpy": "D:\\gulpy\\gulpy-the-bot"
+    }
 }
